@@ -4,10 +4,10 @@ If stereo is supported, in a mode, the cell has a red/blue background, and (wher
 Check the [hardware section of the API-documentation](https://sensorium.github.io/Mozzi/doc/html/hardware.html) for platform specific notes and (pin) configuration options.
 
 <style>
-td[data-mo] { background-color: rgba(0,0,255,.5); } <!-- Mono output --->
-td[data-st] { background: linear-gradient(-45deg,rgba(0,0,255,.5) 50%, rgba(255,0,0,.5) 50%); } <!-- Stereo output --->
-td[data-md] { border: 2px solid; background-color: rgba(0,0,255,.5); } <!-- Mono default --->
-td[data-sd] { border: 2px solid; background: linear-gradient(-45deg,rgba(0,0,255,.5) 50%, rgba(255,0,0,.5) 50%); } <!-- Stereo default --->
+td[data-mo] { background-color: rgba(0,0,255,.5); } /* Mono output */
+td[data-st] { background: linear-gradient(-45deg,rgba(0,0,255,.5) 50%, rgba(255,0,0,.5) 50%); } /* Stereo output */
+td[data-md] { border: 2px solid; background-color: rgba(0,0,255,.5); } /* Mono default */
+td[data-sd] { border: 2px solid; background: linear-gradient(-45deg,rgba(0,0,255,.5) 50%, rgba(255,0,0,.5) 50%); } /* Stereo default */
 </style>
 
 <table border="0">
