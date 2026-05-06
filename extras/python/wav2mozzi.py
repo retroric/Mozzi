@@ -5,15 +5,20 @@
 #	A script for converting .WAV sound files to wavetables for Mozzi.
 #
 #	Usage:
-#	>>>wav2mozzi.py infile [-t tablename] [-o outfile]
+#	>>>wav2mozzi.py infile [-t tablename] [-o outfile] [--output-bits {8,16}] [--no-symmetric-output]
 #
-#	@param infile		The .WAV file to convert.
-#	@param -t tablename	(Optional) The name to give the table. Default: uppercase input filename.
-#	@param -o outfile	(Optional) The output .h file. Default: derived from input filename.
+#   Arguments:
+#	* infile        The .WAV file to convert.
+#   * -t tablename  (Optional) The name to give the table. Default: uppercase input filename.
+#	* -o outfile    (Optional) The output .h file. Default: derived from input filename.
+#	* -b, --output-bits
+#                   (Optional) Output sample size in bits. Allowed: 8 or 16. Default: 8.
+#	* --symmetric-output, --no-symmetric-output
+#                   (Optional) Generate symmetric signed output range. Default: enabled.
 #
 #	Reads bitness, sample format, and sample rate from the WAV header automatically.
 #	Supports 8-bit unsigned, 16-bit signed, 24-bit signed, and 32-bit signed PCM WAV files,
-#	as well as 32-bit IEEE float WAV files (samples in -1.0..1.0 range).
+#	  as well as 32-bit IEEE float WAV files (samples in -1.0..1.0 range).
 #
 #	All sample data is converted to signed 8-bit (-128..127).
 #   If audio is stereo, only the first channel is used.
@@ -80,21 +85,55 @@ def read_wav(infile):
 
         return n_channels, sample_size, sample_rate, n_frames, data_raw, is_float
 
-def wav2mozzi(infile, outfile, tablename):
+
+def wav2mozzi(infile, outfile, tablename, output_bytes=1, symmetric_output=True):
     """
     Convert a WAV file to a Mozzi wavetable header.
     - infile: input WAV file path
     - outfile: output .h file path
     - tablename: name to use for the generated variables (e.g. "MYTABLE")
+    - output_bytes: number of bytes for output samples (1 or 2 supported)
+    - symmetric_output: if True, negative range is the same as positive (e.g. -128 becomes -127 for 1 byte)
     """
     n_channels, sample_size, sample_rate, n_frames, data_bytes, is_float = read_wav(infile)
     print("opened " + infile)
     print("  channels: %d, rate: %d Hz, sample size: %dbit, samples: %d, format: %s" %
           (n_channels, sample_rate, sample_size * 8, n_frames, "float" if is_float else "PCM"))
 
+    # for clarity, convert input to -1.0...1.0 first
+
+    input_midpoint = 0.0
+    input_max = 1.0
+
+    if is_float:
+        if sample_size != 4:
+            print("Unsupported float sample size: %d B" % sample_size)
+            sys.exit(1)
+    else:
+        if sample_size == 1:
+            # 8-bit WAV is unsigned 0..255
+            # by definition, mid point is 128
+            input_midpoint = 128
+            input_max = 255
+        elif sample_size == 2:
+            # 16-bit little-endian signed
+            input_midpoint = 0
+            input_max = 2**15 - 1
+        elif sample_size == 3:
+            # 24-bit little-endian signed
+            input_midpoint = 0
+            input_max = 2**23 - 1
+        elif sample_size == 4:
+            # 32-bit little-endian signed
+            input_midpoint = 0
+            input_max = 2**31 - 1
+        else:
+            print("Unsupported sample size: %d B" % sample_size)
+            sys.exit(1)
+
     # Decode raw bytes into samples (mono only - take first channel)
     values = []
-    is_float_data = is_float
+
     frame_size = n_channels * sample_size
     for i in range(n_frames):
         offset = i * frame_size
@@ -102,13 +141,10 @@ def wav2mozzi(infile, outfile, tablename):
         if is_float:
             if sample_size == 4:
                 val = struct.unpack('<f', sample_bytes)[0]
-            else:
-                print("Unsupported float sample size: %d B" % sample_size)
-                sys.exit(1)
         else:
             if sample_size == 1:
-                # 8-bit WAV is unsigned 0..255 -> convert to signed -128..127
-                val = struct.unpack('B', sample_bytes)[0] - 128
+                # 8-bit WAV is unsigned 0..255
+                val = struct.unpack('B', sample_bytes)[0]
             elif sample_size == 2:
                 # 16-bit little-endian signed
                 val = struct.unpack('<h', sample_bytes)[0]
@@ -116,53 +152,46 @@ def wav2mozzi(infile, outfile, tablename):
                 # 24-bit little-endian signed
                 b = sample_bytes
                 val = b[0] | (b[1] << 8) | (b[2] << 16)
-                if val >= 0x800000:
+                if val >= 0x800000:  # convert to signed
                     val -= 0x1000000
             elif sample_size == 4:
                 val = struct.unpack('<i', sample_bytes)[0]
-            else:
-                print("Unsupported sample size: %d B" % sample_size)
-                sys.exit(1)
         values.append(val)
 
-    # By this point, everything in values is signed.
-
-    # Convert everything to signed int8
-    c_type = 'int8_t'
-    if is_float_data:
-        # Float WAV: values are in -1.0..1.0 range
-        store_values = [max(-128, min(127, int(v * 128 + 0.5))) for v in values]
-    elif sample_size == 1:
-        # already int8 range
-        store_values = values
-    elif sample_size == 2:
-        # 16-bit -> int8: divide by 256
-        store_values = [max(-128, min(127, int(round(v / 256.0)))) for v in values]
-    elif sample_size == 3:
-        # 24-bit -> int8: divide by 65536
-        store_values = [max(-128, min(127, int(round(v / 65536.0)))) for v in values]
-    elif sample_size == 4:
-        # 32-bit -> int8: divide by 16777216
-        store_values = [max(-128, min(127, int(round(v / 16777216.0)))) for v in values]
+    # Scale to -1.0...1.0 range
+    if is_float:
+        scaled_values = values  # already in -1.0...1.0 range
     else:
-        print("Unsupported sample size: %d bytes" % sample_size)
-        sys.exit(1)
+        input_max = input_max - input_midpoint  # for uint8, max should be is 127
+        scaled_values = [(v - input_midpoint) / input_max for v in values]
+
+    # Convert to signed 8-bit or 16-bit range for output
+    c_type = 'int8_t' if output_bytes == 1 else 'int16_t'
+    out_range = [-128, 127] if output_bytes == 1 else [-2**15, 2**15-1]
+    if symmetric_output:
+        out_range[0] += 1  # e.g. -128 becomes -127 for symmetric range
+
+    out_values = [
+        max(out_range[0], min(out_range[1], int(v * out_range[1])))
+        for v in scaled_values
+    ]
 
     # Dither triple-33 sequences (taken from char2mozzi.py)
-    for i in range(len(store_values) - 2):
-        if store_values[i] == 33 and store_values[i+1] == 33 and store_values[i+2] == 33:
-            store_values[i+2] = random.choice([32, 34])
+    for i in range(len(out_values) - 2):
+        if out_values[i] == 33 and out_values[i+1] == 33 and out_values[i+2] == 33:
+            out_values[i+2] = random.choice([32, 34])
 
     fout = open(os.path.expanduser(outfile), "w")
     fout.write('#ifndef ' + tablename + '_H_\n')
     fout.write('#define ' + tablename + '_H_\n\n')
     fout.write('#include <Arduino.h>\n')
     fout.write('#include "mozzi_pgmspace.h"\n\n')
-    fout.write('#define ' + tablename + '_NUM_CELLS ' + str(len(store_values)) + '\n')
+    fout.write('// Arguments: "' + ' '.join(sys.argv[1:]) + '"\n\n')
+    fout.write('#define ' + tablename + '_NUM_CELLS ' + str(len(out_values)) + '\n')
     fout.write('#define ' + tablename + '_SAMPLERATE ' + str(sample_rate) + '\n\n')
     fout.write('CONSTTABLE_STORAGE(' + c_type + ') ' + tablename + '_DATA [] = {\n')
     outstring = ''
-    for v in store_values:
+    for v in out_values:
         outstring += str(v) + ", "
     outstring = textwrap.fill(outstring, width=80, initial_indent='  ', subsequent_indent='  ')
     fout.write(outstring)
@@ -170,6 +199,7 @@ def wav2mozzi(infile, outfile, tablename):
     fout.write('\n#endif /* ' + tablename + '_H_ */\n')
     fout.close()
     print("wrote " + outfile)
+    print("  table name: " + tablename + ", type: " + c_type + (", symmetric" if symmetric_output else ""))
 
 
 if __name__ == "__main__":
@@ -177,6 +207,10 @@ if __name__ == "__main__":
     parser.add_argument('infile', help='Input .WAV file')
     parser.add_argument('-t', '--tablename', help='Table name for the generated header (default: uppercase input filename)')
     parser.add_argument('-o', '--outfile', help='Output .h file (default: derived from input filename)')
+    parser.add_argument('-b', '--output-bits', type=int, choices=(8, 16), default=8,
+                        help='Output sample size in bits (default: 8)')
+    parser.add_argument('-s', '--symmetric-output', action=argparse.BooleanOptionalAction, default=True,
+                        help='Generate a symmetric signed output range (default: enabled)')
     args = parser.parse_args()
 
     infile = os.path.expanduser(args.infile)
@@ -187,4 +221,6 @@ if __name__ == "__main__":
         tablename = re.sub(r'[^A-Za-z0-9_]', '_', os.path.splitext(os.path.basename(infile))[0]).upper()
     outfile = args.outfile if args.outfile else os.path.splitext(infile)[0] + '.h'
 
-    wav2mozzi(infile, outfile, tablename)
+    wav2mozzi(infile, outfile, tablename,
+        output_bytes=args.output_bits // 8,
+        symmetric_output=args.symmetric_output)
