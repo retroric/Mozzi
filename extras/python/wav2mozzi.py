@@ -1,36 +1,62 @@
 #!/usr/bin/env python3
 
-##@file wav2mozzi.py
-#  @ingroup util
-#	A script for converting .WAV sound files to wavetables for Mozzi.
-#
-#	Usage:
-#	>>>wav2mozzi.py infile [-t tablename] [-o outfile] [--output-bits {8,16}] [--no-symmetric-output]
-#
+"""
+A script for converting .WAV files to wavetables for Mozzi.
+
+Reads bitness, sample format, and sample rate from the WAV header automatically.
+Supports 8-bit unsigned, 16-bit signed, 24-bit signed, and 32-bit signed PCM WAV files,
+as well as 32-bit IEEE float WAV files (samples in -1.0..1.0 range).
+
+All sample data is converted to signed 8-bit or 16-bit values.
+Output values are centered around 0 and can be negated without overflow.
+If audio file is stereo, only the first channel is used.
+
+Requires Python 3.9+, no dependencies.
+
+NOTE: Using Audacity to prepare sound files:
+	
+For generated waveforms like sine or sawtooth, set the project
+rate to the size of the wavetable you wish to create, which must
+be a power of two (eg. 8192), and set the selection format
+(beneath the editing window) to samples. Then you can generate
+and save 1 second of a waveform and it will fit your table
+length.
+
+For a recorded audio sample, set the project rate to the
+MOZZI_AUDIO_RATE (16384 in the current version). 
+Samples can be any length, as long as they fit in your Arduino.
+	
+Save the file by "Export" -> "Export as WAV". 
+To keep all the details, choose "32-bit float" encoding. 
+Other supported encodings are 8,16,24,32-bit PCM.
+	
+Now use the file you just exported, as the "infile" to convert.
+
+
+Author: Paul Melnikov, 2026-04
+"""
+
+# 	Usage:
+# 	>>>wav2mozzi.py infile [-t tablename] [-o outfile] [-b {8,16}] [--no-symmetric-output]
 #   Arguments:
-#	* infile        The .WAV file to convert.
+# 	* infile        The .WAV file to convert.
 #   * -t tablename  (Optional) The name to give the table. Default: uppercase input filename.
-#	* -o outfile    (Optional) The output .h file. Default: derived from input filename.
-#	* -b, --output-bits
+# 	* -o outfile    (Optional) The output .h file. Default: derived from input filename.
+# 	* -b, --output-bits
 #                   (Optional) Output sample size in bits. Allowed: 8 or 16. Default: 8.
-#	* --symmetric-output, --no-symmetric-output
+# 	* --symmetric-output, --no-symmetric-output
 #                   (Optional) Generate symmetric signed output range. Default: enabled.
-#
-#	Reads bitness, sample format, and sample rate from the WAV header automatically.
-#	Supports 8-bit unsigned, 16-bit signed, 24-bit signed, and 32-bit signed PCM WAV files,
-#	  as well as 32-bit IEEE float WAV files (samples in -1.0..1.0 range).
-#
-#	All sample data is converted to signed 8-bit (-128..127).
-#   If audio is stereo, only the first channel is used.
-#
-#   Requires Python 3.9+, no dependencies.
-#
+
 
 import sys, os, textwrap, struct, random, argparse, re
 
 def read_wav(infile):
     """Read a WAV file, supporting both PCM and IEEE float formats.
-    Returns (nchannels, sample_size, samplerate, nframes, raw_bytes, is_float)."""
+    Returns (nchannels, sample_size, samplerate, nframes, raw_bytes, is_float).
+    
+    Technically, python has built-in "wave" library for this,
+    but it doesn't support IEEE floats, so decode headers manually.
+    """
     with open(infile, 'rb') as f:
         # Parse RIFF header
         riff = f.read(4)
@@ -201,14 +227,16 @@ def wav2mozzi(infile, outfile, tablename, output_bytes=1, symmetric_output=True)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Convert a .WAV file to a Mozzi wavetable header.')
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('infile', help='Input .WAV file')
     parser.add_argument('-t', '--tablename', help='Table name for the generated header (default: uppercase input filename)')
     parser.add_argument('-o', '--outfile', help='Output .h file (default: derived from input filename)')
     parser.add_argument('-b', '--output-bits', type=int, choices=(8, 16), default=8,
                         help='Output sample size in bits (default: 8)')
     parser.add_argument('-s', '--symmetric-output', action=argparse.BooleanOptionalAction, default=True,
-                        help='Generate a symmetric signed output range (default: enabled)')
+                        help='Generate symmetric signed output range (default: enabled)')
     args = parser.parse_args()
 
     infile = os.path.expanduser(args.infile)
